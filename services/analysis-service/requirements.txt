@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+aio-pika
+psycopg2-binary
+sqlalchemy
+pydantic
+pydantic-settings
+python-dotenv
+requests
+anthropic
+httpx

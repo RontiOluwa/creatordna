@@ -1,0 +1,100 @@
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: sfn
+      POSTGRES_USER: sfn_user
+      POSTGRES_PASSWORD: sfn_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sfn_user -d sfn"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: sfn
+      RABBITMQ_DEFAULT_PASS: sfn_pass
+    ports:
+      - "5672:5672"    # AMQP
+      - "15672:15672"  # Management UI
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ingestion-service:
+    build: ./services/ingestion-service
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./services/ingestion-service:/app
+      - ./shared:/app/shared
+
+  analysis-service:
+    build: ./services/analysis-service
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./services/analysis-service:/app
+      - ./shared:/app/shared
+
+  delivery-service:
+    build: ./services/delivery-service
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      - "8003:8003"
+    volumes:
+      - ./services/delivery-service:/app
+      - ./shared:/app/shared
+
+  api-gateway:
+    build: ./services/api-gateway
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./services/api-gateway:/app
+      - ./shared:/app/shared
+
+volumes:
+  pgdata:
