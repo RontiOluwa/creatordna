@@ -6,6 +6,7 @@ sqlalchemy
 pydantic
 pydantic-settings
 python-dotenv
-requests
 anthropic
 httpx
+requests
+apscheduler
