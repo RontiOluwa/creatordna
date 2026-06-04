@@ -27,7 +27,7 @@ import time
 from typing import Optional
 from app.config import settings
 from app.models import RawVideo, ScrapeResult
-from app.database import get_conn, release_conn
+from shared.database import get_conn, release_conn
 
 logger = logging.getLogger(__name__)
 

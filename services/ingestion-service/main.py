@@ -1,24 +1,8 @@
-# =============================================================================
-# services/ingestion-service/main.py
-# =============================================================================
-# Ingestion Service — entry point.
-#
-# Startup sequence:
-#   1. Initialise DB connection pool
-#   2. Create tables (idempotent)
-#   3. Connect to RabbitMQ and declare exchange
-#   4. Start the daily scrape scheduler
-#
-# Shutdown sequence (on SIGTERM/SIGINT):
-#   1. Stop scheduler (finish running jobs)
-#   2. Close RabbitMQ connection
-#   3. (DB pool closes automatically)
-# =============================================================================
-
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
-from app.database import init_pool, create_tables
-from app.publisher import init_publisher, close_publisher
+from shared.database import init_pool, close_pool
+from shared.rabbitmq.client import init_rabbitmq, close_rabbitmq
+from app.database import create_tables
 from app.scheduler import init_scheduler, shutdown_scheduler
 from app.routes.ingest import router as ingest_router
 import logging
@@ -32,37 +16,21 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # ── Startup ───────────────────────────────────────────────────────────────
     logger.info("Ingestion service starting...")
-
-    # 1. Database
     init_pool()
     create_tables()
-
-    # 2. RabbitMQ publisher
-    await init_publisher()
-
-    # 3. Scheduler
+    await init_rabbitmq(prefetch_count=10)
     init_scheduler()
-
     logger.info("Ingestion service ready")
     yield
-
-    # ── Shutdown ──────────────────────────────────────────────────────────────
     logger.info("Ingestion service shutting down...")
     shutdown_scheduler()
-    await close_publisher()
+    await close_rabbitmq()
+    close_pool()
     logger.info("Ingestion service stopped")
 
 
-app = FastAPI(
-    title="SFN Ingestion Service",
-    description="Pulls TikTok Shop video data and publishes ingestion events",
-    version="0.2.0",
-    lifespan=lifespan,
-)
-
-# Register routes
+app = FastAPI(title="SFN Ingestion Service", version="0.2.0", lifespan=lifespan)
 app.include_router(ingest_router)
 
 
@@ -71,6 +39,6 @@ async def health():
     return {"status": "ok", "service": "ingestion-service"}
 
 
-@app.get("/", tags=["System"])
+@app.get("/")
 async def root():
     return {"service": "ingestion-service", "version": "0.2.0"}
