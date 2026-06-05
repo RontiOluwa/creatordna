@@ -1,22 +1,15 @@
 # =============================================================================
 # services/api-gateway/main.py
 # =============================================================================
-# API Gateway — public-facing entry point.
-#
-# Startup sequence:
-#   1. Initialise shared DB pool
-#   2. Create tables
-#   3. Connect to shared RabbitMQ
-# =============================================================================
 
-from fastapi import Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 from shared.database import init_pool, close_pool
 from shared.rabbitmq.client import init_rabbitmq, close_rabbitmq
 from app.database import create_tables
+from app.routes.auth import router as auth_router
 from app.routes.creators import router as creators_router
 import logging
 
@@ -44,11 +37,32 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="SFN API Gateway",
     description="Public-facing entry point for the SFN platform",
-    version="0.2.0",
+    version="0.3.0",
     lifespan=lifespan,
 )
 
+# ── Routers ───────────────────────────────────────────────────────────────────
+app.include_router(auth_router)
 app.include_router(creators_router)
+
+
+# ── Validation error handler ──────────────────────────────────────────────────
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(
+    request: Request,
+    exc: RequestValidationError
+):
+    errors = []
+    for error in exc.errors():
+        field = " → ".join(str(loc) for loc in error["loc"] if loc != "body")
+        errors.append({
+            "field": field,
+            "message": error["msg"].replace("Value error, ", ""),
+        })
+    return JSONResponse(
+        status_code=422,
+        content={"error": "Validation failed", "details": errors}
+    )
 
 
 @app.get("/health", tags=["System"])
@@ -58,33 +72,4 @@ async def health():
 
 @app.get("/", tags=["System"])
 async def root():
-    return {"service": "api-gateway", "version": "0.2.0"}
-
-
-# ── Validation error handler ──────────────────────────────────────────────────
-
-
-@app.exception_handler(RequestValidationError)
-async def validation_exception_handler(
-    request: Request,
-    exc: RequestValidationError
-):
-    """
-    Returns clear, human-readable validation errors instead of
-    Pydantic's default verbose error format.
-    """
-    errors = []
-    for error in exc.errors():
-        field = " → ".join(str(loc) for loc in error["loc"] if loc != "body")
-        errors.append({
-            "field": field,
-            "message": error["msg"].replace("Value error, ", ""),
-        })
-
-    return JSONResponse(
-        status_code=422,
-        content={
-            "error": "Validation failed",
-            "details": errors,
-        }
-    )
+    return {"service": "api-gateway", "version": "0.3.0"}

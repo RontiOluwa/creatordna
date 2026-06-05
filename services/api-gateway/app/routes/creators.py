@@ -2,17 +2,13 @@
 # app/routes/creators.py — api-gateway
 # =============================================================================
 # Creator onboarding and profile endpoints.
-#
-# Routes:
-#   POST /creators/onboard     — register creator + build DNA profile
-#   GET  /creators/:handle     — get creator profile
-#   GET  /creators/:handle/dna — get creator DNA profile
-#   POST /creators/feedback    — submit idea feedback
+# Protected routes require a valid JWT token.
 # =============================================================================
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from app.models import CreatorOnboardRequest, FeedbackRequest, OnboardResponse
 from app.profiler import build_creator_dna
+from app.auth import get_current_creator
 from shared.database import get_conn, release_conn
 import json
 import logging
@@ -23,60 +19,48 @@ router = APIRouter(prefix="/creators", tags=["Creators"])
 
 
 @router.post("/onboard", response_model=OnboardResponse)
-async def onboard_creator(request: CreatorOnboardRequest):
+async def onboard_creator(
+    request: CreatorOnboardRequest,
+    creator: dict = Depends(get_current_creator),   # 🔒 requires JWT
+):
     """
-    Register a new creator and build their DNA profile.
-
-    Steps:
-      1. Check if creator already exists
-      2. Insert creator record
-      3. Fetch video metadata + call Claude for DNA profiling
-      4. Store DNA profile
-      5. Return creator ID + DNA
-
-    The creator provides their TikTok handle and 3-15 video URLs.
-    Claude analyses the video descriptions to build their content DNA.
+    Complete creator onboarding — build DNA profile.
+    Requires authentication. Creator can only onboard themselves.
     """
     handle = request.tiktok_handle.lstrip("@").lower().strip()
+
+    # Creators can only onboard their own handle
+    if handle != creator["handle"]:
+        raise HTTPException(
+            status_code=403,
+            detail="You can only onboard your own TikTok handle"
+        )
+
     logger.info(f"Onboarding creator: @{handle}")
 
     conn = get_conn()
     try:
         cur = conn.cursor()
 
-        # 1. Check if already exists
+        # Check if already onboarded
         cur.execute(
-            "SELECT id FROM creators WHERE tiktok_handle = %s",
+            "SELECT id FROM creator_profiles WHERE tiktok_handle = %s",
             (handle,)
         )
-        existing = cur.fetchone()
-        if existing:
+        if cur.fetchone():
             raise HTTPException(
                 status_code=400,
-                detail=f"Creator @{handle} is already registered"
+                detail=f"@{handle} is already onboarded"
             )
 
-        # 2. Insert creator record
-        cur.execute("""
-            INSERT INTO creators (tiktok_handle, email)
-            VALUES (%s, %s)
-            RETURNING id
-        """, (handle, request.email))
-        creator_id = cur.fetchone()[0]
-        conn.commit()
-
-        logger.info(f"Creator @{handle} registered with id={creator_id}")
+        creator_id = int(creator["sub"])
 
     except HTTPException:
         raise
-    except Exception as e:
-        conn.rollback()
-        logger.error(f"Failed to register creator: {e}")
-        raise HTTPException(status_code=500, detail="Registration failed")
     finally:
         release_conn(conn)
 
-    # 3. Build DNA profile via Claude
+    # Build DNA profile via Claude
     try:
         dna = await build_creator_dna(handle, request.video_urls)
     except Exception as e:
@@ -86,7 +70,7 @@ async def onboard_creator(request: CreatorOnboardRequest):
             detail=f"DNA profiling failed: {str(e)}"
         )
 
-    # 4. Store DNA profile
+    # Store DNA profile
     conn = get_conn()
     try:
         cur = conn.cursor()
@@ -97,9 +81,7 @@ async def onboard_creator(request: CreatorOnboardRequest):
                 tone, hook_style, avg_video_length,
                 audience_type, content_style,
                 posting_frequency, submitted_videos, raw_dna
-            ) VALUES (
-                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s
-            )
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         """, (
             creator_id,
             handle,
@@ -131,10 +113,12 @@ async def onboard_creator(request: CreatorOnboardRequest):
     )
 
 
-@router.get("/{handle}")
-async def get_creator(handle: str):
-    """Get a creator record by TikTok handle."""
-    handle = handle.lstrip("@").lower().strip()
+@router.get("/me")
+async def get_my_profile(creator: dict = Depends(get_current_creator)):
+    """
+    Get own creator profile. Requires authentication.
+    """
+    handle = creator["handle"]
     conn = get_conn()
     try:
         cur = conn.cursor()
@@ -145,10 +129,7 @@ async def get_creator(handle: str):
         """, (handle,))
         row = cur.fetchone()
         if not row:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Creator @{handle} not found"
-            )
+            raise HTTPException(status_code=404, detail="Creator not found")
         cur.close()
         return {
             "id": row[0],
@@ -161,10 +142,12 @@ async def get_creator(handle: str):
         release_conn(conn)
 
 
-@router.get("/{handle}/dna")
-async def get_creator_dna(handle: str):
-    """Get a creator's DNA profile by TikTok handle."""
-    handle = handle.lstrip("@").lower().strip()
+@router.get("/me/dna")
+async def get_my_dna(creator: dict = Depends(get_current_creator)):
+    """
+    Get own DNA profile. Requires authentication.
+    """
+    handle = creator["handle"]
     conn = get_conn()
     try:
         cur = conn.cursor()
@@ -175,8 +158,7 @@ async def get_creator_dna(handle: str):
                 cp.audience_type, cp.content_style,
                 cp.posting_frequency, cp.raw_dna, cp.updated_at
             FROM creator_profiles cp
-            JOIN creators c ON c.id = cp.creator_id
-            WHERE c.tiktok_handle = %s
+            WHERE cp.tiktok_handle = %s
             ORDER BY cp.updated_at DESC
             LIMIT 1
         """, (handle,))
@@ -184,7 +166,7 @@ async def get_creator_dna(handle: str):
         if not row:
             raise HTTPException(
                 status_code=404,
-                detail=f"No DNA profile found for @{handle}"
+                detail="No DNA profile found — complete onboarding first"
             )
         cur.close()
         return {
@@ -205,26 +187,38 @@ async def get_creator_dna(handle: str):
 
 
 @router.post("/feedback")
-async def submit_feedback(request: FeedbackRequest):
+async def submit_feedback(
+    request: FeedbackRequest,
+    creator: dict = Depends(get_current_creator),   # 🔒 requires JWT
+):
     """
     Submit feedback on a delivered content idea.
-    Stores the feedback for future DNA profile refinement.
+    Creators can only feedback on their own ideas.
     """
+    creator_id = int(creator["sub"])
     conn = get_conn()
     try:
         cur = conn.cursor()
+
+        # Verify idea belongs to this creator
+        cur.execute("""
+            SELECT id FROM content_ideas
+            WHERE id = %s AND creator_id = %s
+        """, (request.idea_id, creator_id))
+
+        if not cur.fetchone():
+            raise HTTPException(
+                status_code=404,
+                detail="Idea not found or does not belong to you"
+            )
+
         cur.execute("""
             UPDATE content_ideas
             SET feedback = %s
             WHERE id = %s
             RETURNING id
         """, (request.feedback, request.idea_id))
-        updated = cur.fetchone()
-        if not updated:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Idea {request.idea_id} not found"
-            )
+
         conn.commit()
         cur.close()
         return {
