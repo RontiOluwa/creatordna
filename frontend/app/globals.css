@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+:root {
+  --background: #F7F7F5;
+  --surface: #FFFFFF;
+  --border: #E8E7E2;
+  --brand: #534AB7;
+  --brand-light: #EEEDFE;
+}
+
+.dark {
+  --background: #111110;
+  --surface: #1C1C1A;
+  --border: #2E2E2C;
+  --brand: #7F77DD;
+  --brand-light: #26215C;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  background: var(--background);
+  color: #1A1A18;
+  font-family: var(--font-sans, system-ui, sans-serif);
+}
+
+.dark body { color: #E8E7E2; }

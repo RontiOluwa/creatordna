@@ -1,55 +1,58 @@
 # =============================================================================
 # app/routes/ideas.py — delivery-service
 # =============================================================================
-# HTTP endpoints and core delivery logic.
-#
-# Routes:
-#   POST /ideas/deliver           — manually trigger delivery for all creators
-#   POST /ideas/deliver/:handle   — trigger delivery for one creator
-#   GET  /ideas/:creator_id       — get all ideas for a creator
-#   GET  /ideas/:creator_id/today — get today's ideas for a creator
-# =============================================================================
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from app.models import CreatorContext, DeliveryResult
 from app.matcher import match_angles
 from app.generator import generate_ideas
-from app.database import (
-    get_active_creators, save_idea,
-    get_conn, release_conn
-)
+from app.auth import verify_internal
+from app.database import get_active_creators, save_idea, get_conn, release_conn
 from app.config import settings
 from shared.rabbitmq.client import publish
 from shared.schemas.events import IdeaDelivered
-import json
 import logging
-from datetime import datetime, date
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ideas", tags=["Ideas"])
 
 
+def _already_delivered_today(creator_id: int) -> bool:
+    """Check if ideas already delivered to this creator today."""
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT count(*) FROM content_ideas
+            WHERE creator_id = %s
+            AND delivered_at::date = CURRENT_DATE
+        """, (creator_id,))
+        count = cur.fetchone()[0]
+        cur.close()
+        return count > 0
+    finally:
+        release_conn(conn)
+
+
 async def deliver_to_creator(creator: dict) -> DeliveryResult:
-    """
-    Full delivery pipeline for one creator:
-      1. Build CreatorContext from DB row
-      2. Match angles from library
-      3. Generate personalised ideas via Claude
-      4. Save ideas to DB
-      5. Publish IdeaDelivered events
-
-    Args:
-        creator: dict from get_active_creators()
-
-    Returns:
-        DeliveryResult with status and idea count
-    """
+    """Full delivery pipeline for one creator."""
     handle = creator["tiktok_handle"]
     creator_id = creator["id"]
 
     try:
-        # 1. Build context
+        # Skip if already delivered today
+        if _already_delivered_today(creator_id):
+            logger.info(f"@{handle} already has ideas today — skipping")
+            return DeliveryResult(
+                creator_id=creator_id,
+                tiktok_handle=handle,
+                ideas_generated=0,
+                status="skipped",
+                error_message="Already delivered today",
+            )
+
+        # Build context
         context = CreatorContext(
             creator_id=creator_id,
             tiktok_handle=handle,
@@ -63,10 +66,9 @@ async def deliver_to_creator(creator: dict) -> DeliveryResult:
             raw_dna=creator["raw_dna"] or {},
         )
 
-        # 2. Match angles
+        # Match angles
         angles = match_angles(context)
         if not angles:
-            logger.warning(f"No angles found for @{handle}")
             return DeliveryResult(
                 creator_id=creator_id,
                 tiktok_handle=handle,
@@ -75,7 +77,7 @@ async def deliver_to_creator(creator: dict) -> DeliveryResult:
                 error_message="No matching angles found",
             )
 
-        # 3. Generate personalised ideas
+        # Generate ideas
         ideas = await generate_ideas(context, angles)
         if not ideas:
             return DeliveryResult(
@@ -86,7 +88,7 @@ async def deliver_to_creator(creator: dict) -> DeliveryResult:
                 error_message="Idea generation returned empty",
             )
 
-        # 4. Save ideas + publish events
+        # Save and publish
         saved = 0
         for idea in ideas:
             idea_id = save_idea(
@@ -98,8 +100,6 @@ async def deliver_to_creator(creator: dict) -> DeliveryResult:
                 angle_type=idea.angle_type,
                 source_revenue=idea.source_revenue,
             )
-
-            # 5. Publish IdeaDelivered event
             event = IdeaDelivered(
                 creator_id=str(creator_id),
                 idea_id=str(idea_id),
@@ -108,10 +108,7 @@ async def deliver_to_creator(creator: dict) -> DeliveryResult:
                 cta=idea.cta,
                 angle_type=idea.angle_type,
             )
-            await publish(
-                "idea.delivered",
-                event.model_dump_json().encode()
-            )
+            await publish("idea.delivered", event.model_dump_json().encode())
             saved += 1
 
         logger.info(f"Delivered {saved} ideas to @{handle}")
@@ -134,18 +131,13 @@ async def deliver_to_creator(creator: dict) -> DeliveryResult:
 
 
 async def run_delivery() -> list[DeliveryResult]:
-    """
-    Run delivery for all active creators.
-    Called by scheduler daily and by POST /ideas/deliver manually.
-    """
+    """Run delivery for all active creators."""
     creators = get_active_creators()
-    logger.info(f"Starting delivery for {len(creators)} active creators")
-
+    logger.info(f"Starting delivery for {len(creators)} creators")
     results = []
     for creator in creators:
         result = await deliver_to_creator(creator)
         results.append(result)
-
     total = sum(r.ideas_generated for r in results)
     logger.info(f"Delivery complete — {total} ideas generated")
     return results
@@ -154,12 +146,9 @@ async def run_delivery() -> list[DeliveryResult]:
 # ── HTTP Endpoints ────────────────────────────────────────────────────────────
 
 @router.post("/deliver")
-async def trigger_full_delivery():
-    """
-    Manually trigger delivery for all active creators.
-    Useful during development without waiting for 7am cron.
-    """
-    logger.info("Manual full delivery triggered")
+async def trigger_full_delivery(_: None = Depends(verify_internal)):
+    """Trigger delivery for all active creators. Protected by internal secret."""
+    logger.info("Full delivery triggered")
     results = await run_delivery()
     return {
         "message": "Delivery complete",
@@ -170,24 +159,21 @@ async def trigger_full_delivery():
 
 
 @router.post("/deliver/{handle}")
-async def trigger_creator_delivery(handle: str):
-    """
-    Manually trigger delivery for one specific creator.
-    """
+async def trigger_creator_delivery(
+    handle: str,
+    _: None = Depends(verify_internal),
+):
+    """Trigger delivery for one creator. Protected by internal secret."""
     handle = handle.lstrip("@").lower().strip()
-
     creators = get_active_creators()
     creator = next(
-        (c for c in creators if c["tiktok_handle"] == handle),
-        None
+        (c for c in creators if c["tiktok_handle"] == handle), None
     )
-
     if not creator:
         raise HTTPException(
             status_code=404,
             detail=f"Creator @{handle} not found or has no DNA profile"
         )
-
     result = await deliver_to_creator(creator)
     return {
         "message": f"Delivery complete for @{handle}",
@@ -195,22 +181,21 @@ async def trigger_creator_delivery(handle: str):
     }
 
 
-@router.get("/{creator_id}")
-async def get_creator_ideas(creator_id: int, limit: int = 20):
-    """Get all content ideas for a creator."""
+@router.get("/{creator_id}/today")
+async def get_todays_ideas(creator_id: int):
+    """Get today's ideas for a creator."""
     conn = get_conn()
     try:
         cur = conn.cursor()
         cur.execute("""
-            SELECT
-                id, hook, shot_list, cta,
-                angle_type, source_revenue,
-                feedback, delivered_at
+            SELECT id, hook, shot_list, cta,
+                   angle_type, source_revenue,
+                   feedback, delivered_at
             FROM content_ideas
             WHERE creator_id = %s
+            AND delivered_at::date = CURRENT_DATE
             ORDER BY delivered_at DESC
-            LIMIT %s
-        """, (creator_id, limit))
+        """, (creator_id,))
         rows = cur.fetchall()
         columns = [
             "id", "hook", "shot_list", "cta",
@@ -226,22 +211,21 @@ async def get_creator_ideas(creator_id: int, limit: int = 20):
         release_conn(conn)
 
 
-@router.get("/{creator_id}/today")
-async def get_todays_ideas(creator_id: int):
-    """Get today's content ideas for a creator."""
+@router.get("/{creator_id}")
+async def get_creator_ideas(creator_id: int, limit: int = 50):
+    """Get all ideas for a creator."""
     conn = get_conn()
     try:
         cur = conn.cursor()
         cur.execute("""
-            SELECT
-                id, hook, shot_list, cta,
-                angle_type, source_revenue,
-                feedback, delivered_at
+            SELECT id, hook, shot_list, cta,
+                   angle_type, source_revenue,
+                   feedback, delivered_at
             FROM content_ideas
             WHERE creator_id = %s
-            AND delivered_at::date = CURRENT_DATE
             ORDER BY delivered_at DESC
-        """, (creator_id,))
+            LIMIT %s
+        """, (creator_id, limit))
         rows = cur.fetchall()
         columns = [
             "id", "hook", "shot_list", "cta",
