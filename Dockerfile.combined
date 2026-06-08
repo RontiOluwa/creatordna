@@ -1,0 +1,36 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install supervisor to run multiple processes
+RUN pip install supervisor
+
+# Copy all requirements files
+COPY services/api-gateway/requirements.txt requirements-gateway.txt
+COPY services/ingestion-service/requirements.txt requirements-ingestion.txt
+COPY services/analysis-service/requirements.txt requirements-analysis.txt
+COPY services/delivery-service/requirements.txt requirements-delivery.txt
+
+# Install all dependencies in one layer
+RUN pip install --no-cache-dir \
+    -r requirements-gateway.txt \
+    -r requirements-ingestion.txt \
+    -r requirements-analysis.txt \
+    -r requirements-delivery.txt
+
+# Copy shared library — available to all services via PYTHONPATH
+COPY shared/ ./shared/
+
+# Copy each service into its own directory
+COPY services/api-gateway/ ./api_gateway/
+COPY services/ingestion-service/ ./ingestion/
+COPY services/analysis-service/ ./analysis/
+COPY services/delivery-service/ ./delivery/
+
+# Copy supervisor config
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+
+# Expose only the api-gateway port publicly
+EXPOSE 8000
+
+CMD ["supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
