@@ -17,7 +17,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ideas", tags=["Ideas"])
 
-DELIVERY_URL = os.getenv("DELIVERY_SERVICE_URL", "http://delivery-service:8003")
+DELIVERY_URL = os.getenv("DELIVERY_SERVICE_URL",
+                         "http://delivery-service:8003")
 INTERNAL_SECRET = os.getenv("INTERNAL_SERVICE_SECRET", "")
 
 INTERNAL_HEADERS = {"x-internal-secret": INTERNAL_SECRET}
@@ -40,7 +41,8 @@ async def _proxy_get(path: str) -> dict:
             )
         except Exception as e:
             logger.error(f"Proxy GET error: {e}")
-            raise HTTPException(status_code=503, detail="Delivery service unavailable")
+            raise HTTPException(
+                status_code=503, detail="Delivery service unavailable")
 
 
 async def _proxy_post(path: str) -> dict:
@@ -60,7 +62,8 @@ async def _proxy_post(path: str) -> dict:
             )
         except Exception as e:
             logger.error(f"Proxy POST error: {e}")
-            raise HTTPException(status_code=503, detail="Delivery service unavailable")
+            raise HTTPException(
+                status_code=503, detail="Delivery service unavailable")
 
 
 @router.post("/deliver/me")
@@ -187,3 +190,66 @@ async def get_all_ideas(
     if str(creator_id) != creator["sub"]:
         raise HTTPException(status_code=403, detail="Forbidden")
     return await _proxy_get(f"/ideas/{creator_id}")
+
+
+@router.post("/seed")
+async def seed_database():
+    """
+    One-time endpoint to seed Railway database.
+    Triggers scraper + publishes VideoIngested events for all videos.
+    Call this once after deploying to Railway.
+    """
+    import psycopg2
+    from shared.database import get_conn, release_conn
+    from shared.rabbitmq.client import publish
+    import json
+    from datetime import datetime
+
+    # Step 1 - trigger scraper via internal call
+    async with httpx.AsyncClient(timeout=120) as client:
+        try:
+            await client.post(
+                f"http://localhost:8001/ingest/trigger",
+                headers=INTERNAL_HEADERS,
+            )
+        except Exception as e:
+            logger.error(f"Scrape trigger failed: {e}")
+
+    # Step 2 - publish VideoIngested for all videos
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT tiktok_video_id, handle, description, revenue,
+                   revenue_raw, items_sold, views, gpm, niche, category_id
+            FROM raw_videos
+            ORDER BY revenue_raw DESC NULLS LAST
+        """)
+        videos = cur.fetchall()
+        cur.close()
+    finally:
+        release_conn(conn)
+
+    published = 0
+    for video in videos:
+        event = {
+            "video_id": video[0],
+            "handle": video[1] or "",
+            "description": video[2] or "",
+            "revenue": video[3] or "",
+            "revenue_raw": float(video[4]) if video[4] else None,
+            "items_sold": video[5],
+            "views": video[6],
+            "gpm": video[7] or "",
+            "niche": video[8],
+            "category_id": video[9] or "",
+            "ingested_at": datetime.now().isoformat()
+        }
+        await publish("video.ingested", json.dumps(event).encode())
+        published += 1
+
+    return {
+        "message": "Seed complete",
+        "videos_found": len(videos),
+        "events_published": published,
+    }
