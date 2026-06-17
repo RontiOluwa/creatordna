@@ -1,27 +1,129 @@
 @import "tailwindcss";
 
 :root {
-  --background: #F7F7F5;
-  --surface: #FFFFFF;
-  --border: #E8E7E2;
-  --brand: #534AB7;
-  --brand-light: #EEEDFE;
+  --purple:        #7C3AED;
+  --purple-light:  #EDE9FE;
+  --purple-mid:    #A78BFA;
+  --purple-dark:   #5B21B6;
+  --green:         #10B981;
+  --green-light:   #D1FAE5;
+  --red:           #EF4444;
+  --red-light:     #FEE2E2;
+  --gray-50:       #F9FAFB;
+  --gray-100:      #F3F4F6;
+  --gray-200:      #E5E7EB;
+  --gray-300:      #D1D5DB;
+  --gray-400:      #9CA3AF;
+  --gray-500:      #6B7280;
+  --gray-600:      #4B5563;
+  --gray-700:      #374151;
+  --gray-900:      #111827;
+  --sidebar-w:     220px;
 }
 
-.dark {
-  --background: #111110;
-  --surface: #1C1C1A;
-  --border: #2E2E2C;
-  --brand: #7F77DD;
-  --brand-light: #26215C;
-}
-
-* { box-sizing: border-box; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
-  background: var(--background);
-  color: #1A1A18;
-  font-family: var(--font-sans, system-ui, sans-serif);
+  background: var(--gray-100);
+  color: var(--gray-900);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
-.dark body { color: #E8E7E2; }
+/* ── Responsive layout classes ─────────────────────────── */
+.desktop-sidebar {
+  display: flex;
+}
+.mobile-topbar {
+  display: none;
+}
+.mobile-bottomnav {
+  display: none;
+}
+.main-content {
+  margin-left: var(--sidebar-w);
+  padding-bottom: 0;
+}
+
+/* ── Responsive grid ──────────────────────────────────── */
+.ideas-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+
+.settings-2col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+/* ── Mobile ───────────────────────────────────────────── */
+@media (max-width: 767px) {
+  .desktop-sidebar {
+    display: none !important;
+  }
+  .mobile-topbar {
+    display: flex !important;
+  }
+  .mobile-bottomnav {
+    display: flex !important;
+  }
+  .main-content {
+    margin-left: 0 !important;
+    padding-top: 60px !important;
+    padding-bottom: 80px !important;
+  }
+  .ideas-grid {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+  }
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 10px !important;
+  }
+  .settings-2col {
+    grid-template-columns: 1fr !important;
+  }
+  .page-header-row {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 12px !important;
+  }
+  .hide-mobile {
+    display: none !important;
+  }
+  .page-pad {
+    padding: 16px !important;
+  }
+  .dna-stats-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+}
+
+/* ── Tablet ───────────────────────────────────────────── */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .ideas-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 12px !important;
+  }
+  .page-pad {
+    padding: 20px !important;
+  }
+}
+
+/* ── Animations ───────────────────────────────────────── */
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}

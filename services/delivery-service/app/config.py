@@ -16,7 +16,7 @@ class Settings(BaseSettings):
 
     # ── Delivery config ───────────────────────────────────────────────────────
     # How many ideas to generate per creator per day
-    IDEAS_PER_CREATOR: int = 2
+    IDEAS_PER_CREATOR: int = 6
 
     # How many angles to pass to Claude for matching
     TOP_ANGLES_TO_MATCH: int = 5

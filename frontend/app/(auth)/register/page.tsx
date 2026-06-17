@@ -9,11 +9,7 @@ import { AuthResponse } from '@/types'
 
 export default function RegisterPage() {
   const router = useRouter()
-  const [form, setForm] = useState({
-    tiktok_handle: '',
-    email: '',
-    password: '',
-  })
+  const [form, setForm] = useState({ tiktok_handle: '', email: '', password: '' })
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -24,119 +20,47 @@ export default function RegisterPage() {
     try {
       const res = await authApi.register(form)
       const data: AuthResponse = res.data
-      setAuth(data.access_token, {
-        id: data.creator_id,
-        tiktok_handle: data.tiktok_handle,
-      })
+      setAuth(data.access_token, { id: data.creator_id, tiktok_handle: data.tiktok_handle })
       router.push('/today')
     } catch (err: unknown) {
-      const details = (err as {
-        response?: { data?: { details?: { message: string }[] } }
-      })?.response?.data?.details
-      if (details?.length) {
-        setError(details.map((d) => d.message).join(', '))
-      } else {
-        const msg = (err as { response?: { data?: { detail?: string } } })
-          ?.response?.data?.detail
-        setError(msg || 'Registration failed')
-      }
-    } finally {
-      setLoading(false)
-    }
+      const details = (err as { response?: { data?: { details?: { message: string }[] } } })?.response?.data?.details
+      setError(details?.length ? details.map(d => d.message).join(', ') : (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Registration failed')
+    } finally { setLoading(false) }
   }
 
   return (
-    <div className="rounded-2xl p-8" style={{
-      background: 'var(--surface)',
-      border: '1px solid var(--border)',
-    }}>
-      <h2 className="text-lg font-medium mb-6">Create your account</h2>
-
-      {error && (
-        <div className="mb-4 px-4 py-3 rounded-lg text-sm"
-          style={{ background: '#FCEBEB', color: '#791F1F' }}>
-          {error}
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: 'var(--gray-100)', padding: 20 }}>
+      <div style={{ background: 'white', borderRadius: 24, width: '100%', maxWidth: 400, padding: 32, boxShadow: '0 8px 24px rgba(0,0,0,0.1)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'center', marginBottom: 8 }}>
+          <div style={{ width: 40, height: 40, borderRadius: 12, background: 'var(--purple)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z" /></svg>
+          </div>
+          <span style={{ fontSize: 18, fontWeight: 700 }}>Ideas Hub</span>
         </div>
-      )}
+        <p style={{ fontSize: 13, color: 'var(--gray-400)', textAlign: 'center', marginBottom: 28 }}>Create your creator account</p>
 
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label className="block text-xs font-medium mb-1.5"
-            style={{ color: '#6B6B66' }}>
-            TikTok handle
-          </label>
-          <input
-            type="text"
-            required
-            value={form.tiktok_handle}
-            onChange={e => setForm({ ...form, tiktok_handle: e.target.value })}
-            className="w-full px-3 py-2.5 rounded-lg text-sm outline-none"
-            style={{
-              background: 'var(--background)',
-              border: '1px solid var(--border)',
-              color: 'inherit',
-            }}
-            placeholder="@yourhandle"
-          />
-        </div>
+        {error && <div style={{ marginBottom: 16, padding: '12px 16px', background: '#FEE2E2', color: '#991B1B', borderRadius: 12, fontSize: 13 }}>{error}</div>}
 
-        <div>
-          <label className="block text-xs font-medium mb-1.5"
-            style={{ color: '#6B6B66' }}>
-            Email
-          </label>
-          <input
-            type="email"
-            required
-            value={form.email}
-            onChange={e => setForm({ ...form, email: e.target.value })}
-            className="w-full px-3 py-2.5 rounded-lg text-sm outline-none"
-            style={{
-              background: 'var(--background)',
-              border: '1px solid var(--border)',
-              color: 'inherit',
-            }}
-            placeholder="you@example.com"
-          />
-        </div>
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {[{ label: 'TikTok handle', type: 'text', key: 'tiktok_handle', placeholder: '@yourhandle' },
+          { label: 'Email', type: 'email', key: 'email', placeholder: 'you@example.com' },
+          { label: 'Password', type: 'password', key: 'password', placeholder: 'Min 8 chars, 1 uppercase, 1 number' }].map(f => (
+            <div key={f.key}>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: 'var(--gray-600)', marginBottom: 6 }}>{f.label}</label>
+              <input type={f.type} required placeholder={f.placeholder} value={form[f.key as keyof typeof form]} onChange={e => setForm({ ...form, [f.key]: e.target.value })}
+                style={{ width: '100%', padding: '11px 14px', border: '1.5px solid var(--gray-200)', borderRadius: 10, fontSize: 14, outline: 'none', color: 'var(--gray-700)', background: 'white' }} />
+            </div>
+          ))}
+          <button type="submit" disabled={loading} style={{ width: '100%', padding: 13, background: 'var(--purple)', color: 'white', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 600, cursor: 'pointer', opacity: loading ? 0.7 : 1, marginTop: 4 }}>
+            {loading ? 'Creating account...' : 'Create account'}
+          </button>
+        </form>
 
-        <div>
-          <label className="block text-xs font-medium mb-1.5"
-            style={{ color: '#6B6B66' }}>
-            Password
-          </label>
-          <input
-            type="password"
-            required
-            value={form.password}
-            onChange={e => setForm({ ...form, password: e.target.value })}
-            className="w-full px-3 py-2.5 rounded-lg text-sm outline-none"
-            style={{
-              background: 'var(--background)',
-              border: '1px solid var(--border)',
-              color: 'inherit',
-            }}
-            placeholder="Min 8 chars, 1 uppercase, 1 number"
-          />
-        </div>
-
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full py-2.5 rounded-lg text-sm font-medium text-white mt-2"
-          style={{ background: 'var(--brand)', opacity: loading ? 0.7 : 1 }}
-        >
-          {loading ? 'Creating account...' : 'Create account'}
-        </button>
-      </form>
-
-      <p className="text-center text-sm mt-6" style={{ color: '#9B9B96' }}>
-        Already have an account?{' '}
-        <Link href="/login" style={{ color: 'var(--brand)' }}
-          className="font-medium">
-          Sign in
-        </Link>
-      </p>
+        <p style={{ textAlign: 'center', fontSize: 14, color: 'var(--gray-400)', marginTop: 20 }}>
+          Already have an account?{' '}
+          <Link href="/login" style={{ color: 'var(--purple)', fontWeight: 500, textDecoration: 'none' }}>Sign in</Link>
+        </p>
+      </div>
     </div>
   )
 }
